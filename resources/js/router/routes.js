@@ -76,6 +76,11 @@ const routes = [
         name: "admin-wialon",
         component: () => import("../pages/admin/WialonPage.vue"),
       },
+      {
+        path: "custom",
+        name: "admin-custom",
+        component: () => import("../pages/admin/CustomDashboard.vue"),
+      },
     ],
   },
   {

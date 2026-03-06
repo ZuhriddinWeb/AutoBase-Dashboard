@@ -9,9 +9,11 @@ use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\Api\SystemLogController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\RoleController;
+use App\Http\Controllers\Api\GeozoneController;
+
 // --- AUTH ---
 Route::post('/login', [AuthController::class, 'login']);
-
+Route::get('/wialon-explore', [WialonController::class, 'exploreData']);
 Route::middleware('auth:sanctum')->group(function () {
      Route::get('/roles', [RoleController::class, 'index']);           // Ro'yxatni olish
     Route::post('/roles', [RoleController::class, 'store']);          // Yangi rol (+ Yangi Rol tugmasi uchun)
@@ -25,9 +27,15 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/user', function (Request $request) {
         return $request->user();
     });
+    Route::get('/users-list', [DashboardController::class, 'getUsers']); // <--- YANGI
+    Route::get('/dashboard/config', [DashboardController::class, 'getConfig']);
+    Route::post('/dashboard/config', [DashboardController::class, 'saveConfig']);
+    Route::get('/dashboard/data', [WialonController::class, 'getDashboardData']);
+    Route::post('/wialon/sync-geozones', [WialonController::class, 'syncGeozones']);
     
 });
-
+Route::apiResource('crud/geozones', GeozoneController::class);
+Route::get('/wialon-test', [WialonController::class, 'testWialonData']);
 // --- DASHBOARD & LOGS ---
 Route::get('/dashboard/stats', [DashboardController::class, 'stats']);
 Route::get('/system-logs', [SystemLogController::class, 'index']);

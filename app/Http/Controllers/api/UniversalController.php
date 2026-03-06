@@ -28,7 +28,15 @@ class UniversalController extends Controller
     public function index($resource)
     {
         $model = $this->getModel($resource);
-        return $model::latest()->get();
+        
+        $query = $model::latest();
+
+        // Agar Transport Guruhlari so'ralayotgan bo'lsa, ichidagi mashinalarni ham qo'shib olamiz
+        if ($resource === 'transport_groups') {
+            $query->with('machines');
+        }
+
+        return $query->get();
     }
 
     public function store(Request $request, $resource)
@@ -42,10 +50,18 @@ class UniversalController extends Controller
         }
 
         // Dinamik model orqali yaratish
-        return $model::create($data);
+        $item = $model::create($data);
+
+        // 2. Agar "machines" degan massiv kelsa, ularni pivot jadvalga ulaymiz
+        if ($request->has('machines') && is_array($request->machines)) {
+            // 'machines()' funksiyasi TransportGroup modelida bo'lishi shart!
+            $item->machines()->sync($request->machines);
+        }
+
+        return $item;
     }
 
-    public function update(Request $request, $resource, $id)
+public function update(Request $request, $resource, $id)
     {
         $model = $this->getModel($resource);
         $item = $model::findOrFail($id);
@@ -53,7 +69,6 @@ class UniversalController extends Controller
         $data = $request->all();
 
         if ($resource === 'users') {
-            // Parol bo'sh bo'lsa, uni o'zgartirmaymiz
             if (empty($data['password'])) {
                 unset($data['password']);
             } else {
@@ -61,11 +76,18 @@ class UniversalController extends Controller
             }
         }
 
+        // 1. Asosiy ma'lumotni yangilaymiz
         $item->update($data);
+
+        // 2. Agar "machines" o'zgargan bo'lsa, uni ham yangilaymiz
+        if ($request->has('machines') && is_array($request->machines)) {
+            $item->machines()->sync($request->machines);
+        }
+
         return $item;
     }
 
-    public function destroy($resource, $id)
+public function destroy($resource, $id)
     {
         $model = $this->getModel($resource);
         $item = $model::findOrFail($id);

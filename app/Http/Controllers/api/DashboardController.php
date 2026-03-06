@@ -12,7 +12,9 @@ use App\Models\GeozoneGroup;
 use App\Models\Page;
 use App\Models\SystemLog;
 use App\Models\WialonSetting; // Token bor jadvalingiz
-
+use App\Models\UserDashboard;
+use Auth;
+use App\Models\User;
 class DashboardController extends Controller
 {
     public function stats()
@@ -148,5 +150,119 @@ class DashboardController extends Controller
                 'text' => 'ULANISH YO\'Q'
             ];
         }
+    }
+    public function getConfig(Request $request)
+    {
+        // Agar requestda user_id kelsa, o'shanikini olamiz, bo'lmasa o'zimiznikini
+        $targetUserId = $request->query('user_id', Auth::id());
+
+        $dashboard = UserDashboard::firstOrCreate(
+            ['user_id' => $targetUserId],
+            ['layout' => []]
+        );
+
+        return response()->json($dashboard->layout);
+    }
+    public function saveConfig(Request $request)
+    {
+        $request->validate([
+            'layout' => 'required|array',
+            'user_id' => 'nullable|exists:users,id' // user_id bo'lsa tekshiramiz
+        ]);
+
+        // Agar user_id kelsa o'sha userga, kelmasa o'ziga saqlaydi
+        $targetUserId = $request->input('user_id', Auth::id());
+
+        $dashboard = UserDashboard::updateOrCreate(
+            ['user_id' => $targetUserId],
+            ['layout' => $request->layout]
+        );
+
+        return response()->json(['message' => 'Dashboard muvaffaqiyatli saqlandi!']);
+    }
+    public function getRealData()
+    {
+        // Izoh: Real loyihada bu yerda "Machine", "Fuel", "Event" kabi modellardan
+        // ma'lumotlar olinadi. Hozircha vizual ko'rinish uchun
+        // realistik ma'lumotlarni generatsiya qilamiz.
+
+        $data = [
+            // --- 1. STATISTIKA KARTALARI ---
+            // Haqiqiy misol: DB::table('machines')->count()
+            'TotalMachines' => 142,
+            'ActiveDrivers' => 89,
+            'FuelConsumption' => rand(4200, 4600) . 'L', // O'zgaruvchan
+            'TotalDistance' => rand(12000, 12100) . 'km',
+            'AlertsCount' => rand(3, 15),
+            'OnlineUsers' => rand(2, 8),
+
+            // --- 2. GRAFIKLAR (Array of values) ---
+            // Frontenddagi sparkline chartlar uchun (15 ta nuqta)
+            'WeeklyChart' => $this->generateChartData(15, 20, 100),
+            'FuelChart' => $this->generateChartData(15, 40, 90),
+            'DistanceChart' => $this->generateChartData(15, 100, 500),
+            'SplineChart' => $this->generateChartData(20, 10, 50), // Signal sifati
+
+            // --- 3. STATUS GRIDLARI (Eng muhim qism) ---
+            // Bu yerda texnikalar ro'yxatini qaytaramiz
+            'GreenGrid' => $this->generateGridData('C', 481, 32), // 32 ta faol texnika
+            'OrangeGrid' => $this->generateGridData('C', 520, 16), // 16 ta yoqilg'ida
+            'BlueGrid' => $this->generateGridData('P', 101, 24), // 24 ta parkovkada
+
+            // --- 4. GAUGE (SPIDOMETR VA RPM) ---
+            'SpeedGauge' => rand(0, 180), // Km/h
+            'RpmGauge' => rand(10, 80) / 10, // Masalan: 2.4 x1000
+
+            // --- 5. TIZIM STATUSLARI ---
+            'ServerStatus' => rand(20, 60), // %
+            'DbStatus' => 78, // % (Stabil)
+            'WialonStatus' => rand(10, 50), // Ping (ms)
+
+            // --- 6. RO'YXATLAR (LISTS) ---
+            'LastEvents' => [
+                ['name' => 'C450 - Tezlik oshirdi', 'status' => 'ERR'],
+                ['name' => 'C421 - Zona tark etdi', 'status' => 'ERR'],
+                ['name' => 'C102 - Ish boshladi', 'status' => 'OK'],
+                ['name' => 'C305 - Yoqilg\'i quyildi', 'status' => 'OK'],
+                ['name' => 'C200 - Signal yo\'q', 'status' => 'ERR'],
+            ],
+            'TopDrivers' => [
+                ['name' => 'Aliyev V.', 'status' => '98%'],
+                ['name' => 'Valiyev S.', 'status' => '95%'],
+                ['name' => 'Karimov A.', 'status' => '92%'],
+            ],
+            'MaintenanceList' => [
+                ['name' => 'Ekskavator #4', 'status' => 'Moy'],
+                ['name' => 'KamAZ #12', 'status' => 'Shina'],
+            ]
+        ];
+
+        return response()->json($data);
+    }
+    private function generateChartData($count, $min, $max)
+    {
+        $data = [];
+        for ($i = 0; $i < $count; $i++) {
+            $data[] = rand($min, $max);
+        }
+        return $data;
+    }
+    private function generateGridData($prefix, $startId, $count)
+    {
+        $items = [];
+        for ($i = 0; $i < $count; $i++) {
+            $items[] = [
+                'id' => $i,
+                'label' => $prefix . ($startId + $i), // Masalan: C481
+                'value' => rand(0, 60)                // Masalan: Tezlik yoki ko'rsatkich
+            ];
+        }
+        return $items;
+    }
+    public function getUsers()
+    {
+        // Ism va familiyani birlashtirib 'name' sifatida qaytarish
+        $users = User::selectRaw("id, first_name + ' ' + last_name as name")->get();
+        return response()->json($users);
     }
 }

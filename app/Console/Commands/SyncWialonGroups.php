@@ -11,13 +11,12 @@ use Illuminate\Support\Facades\Http;
 class SyncWialonGroups extends Command
 {
     protected $signature = 'wialon:sync-groups';
-    protected $description = 'Wialondan Transport va Geozona guruhlarini yuklash';
+    protected $description = 'Wialondan Transport guruhlari va GEOZONALARNI yuklash';
 
     public function handle()
     {
-        $this->info('--- Guruhlarni yuklash boshlandi ---');
+        $this->info('--- Yuklash boshlandi ---');
 
-        // 1. Sozlamalar va Login (Avvalgi kod bilan bir xil)
         $setting = WialonSetting::where('status', 'active')->first();
         if (!$setting) {
             $this->error('Sozlamalar yo\'q!');
@@ -25,14 +24,13 @@ class SyncWialonGroups extends Command
         }
 
         $baseUrl = rtrim($setting->base_url, '/');
-        
-        // Login
+
         $loginRes = Http::get($baseUrl . '/wialon/ajax.html', [
             'svc' => 'token/login',
             'params' => json_encode(['token' => $setting->token])
         ]);
         $loginData = $loginRes->json();
-        
+
         if (!isset($loginData['eid'])) {
             $this->error('Login xatosi!');
             return;
@@ -40,37 +38,33 @@ class SyncWialonGroups extends Command
         $sid = $loginData['eid'];
 
         // ==========================================
-        // 2. TRANSPORT GURUHLARINI OLISH (avl_unit_group)
+        // 1. TRANSPORT GURUHLARINI OLISH
         // ==========================================
         $this->info('Transport guruhlari qidirilmoqda...');
-        
-        $this->fetchAndSave($baseUrl, $sid, 'avl_unit_group', TransportGroup::class);
+        $this->syncTransportGroups($baseUrl, $sid);
 
         // ==========================================
-        // 3. GEOZONA GURUHLARINI OLISH (avl_resource)
+        // 2. GEOZONALARNI OLISH (avl_resource va zl)
         // ==========================================
-        $this->info('Geozona guruhlari (Resurslar) qidirilmoqda...');
+        $this->info('Geozonalar qidirilmoqda...');
+        $this->syncGeozones($baseUrl, $sid);
 
-        $this->fetchAndSave($baseUrl, $sid, 'avl_resource', GeozoneGroup::class);
-
-        // Logout
         Http::get($baseUrl . '/wialon/ajax.html', ['svc' => 'core/logout', 'sid' => $sid]);
-        
+
         $this->info('--- Barchasi muvaffaqiyatli yakunlandi ---');
     }
 
-    // Kodni qisqartirish uchun yordamchi funksiya
-    private function fetchAndSave($baseUrl, $sid, $wialonType, $modelClass)
+    private function syncTransportGroups($baseUrl, $sid)
     {
         $params = [
             'spec' => [
-                'itemsType' => $wialonType, // avl_unit_group yoki avl_resource
+                'itemsType' => 'avl_unit_group',
                 'propName' => 'sys_name',
                 'propValueMask' => '*',
                 'sortType' => 'sys_name'
             ],
             'force' => 1,
-            'flags' => 1, // Bizga faqat ID va Name kerak
+            'flags' => 1, // Faqat asosiy ma'lumotlar
             'from' => 0,
             'to' => 0
         ];
@@ -79,22 +73,90 @@ class SyncWialonGroups extends Command
             'svc' => 'core/search_items',
             'sid' => $sid,
             'params' => json_encode($params)
-        ]);
+        ])->json();
 
-        $data = $response->json();
-
-        if (isset($data['items'])) {
+        if (isset($response['items'])) {
             $count = 0;
-            foreach ($data['items'] as $item) {
-                $modelClass::updateOrCreate(
+            foreach ($response['items'] as $item) {
+                TransportGroup::updateOrCreate(
                     ['wialon_id' => $item['id']],
                     ['name' => $item['nm']]
                 );
                 $count++;
             }
-            $this->info("   -> $count ta guruh saqlandi ($wialonType).");
+            $this->info("   -> $count ta transport guruhi saqlandi.");
         } else {
-            $this->error("   -> $wialonType topilmadi yoki xatolik.");
+            $this->error("   -> Transport guruhlari topilmadi.");
+        }
+    }
+
+    private function syncGeozones($baseUrl, $sid)
+    {
+        $params = [
+            'spec' => [
+                'itemsType' => 'avl_resource',
+                'propName' => 'sys_name',
+                'propValueMask' => '*',
+                'sortType' => 'sys_name'
+            ],
+            'force' => 1,
+            'flags' => 4097, // 4096 (Geozonalar - zl) + 1 (Base info)
+            'from' => 0,
+            'to' => 0
+        ];
+
+        $response = Http::get($baseUrl . '/wialon/ajax.html', [
+            'svc' => 'core/search_items',
+            'sid' => $sid,
+            'params' => json_encode($params)
+        ])->json();
+
+        if (isset($response['items'])) {
+            $count = 0;
+            foreach ($response['items'] as $resource) {
+                $resourceId = $resource['id'];
+
+                if (isset($resource['zl']) && is_array($resource['zl'])) {
+                    foreach ($resource['zl'] as $zoneId => $zoneData) {
+
+                        $zoneName = $zoneData['n'] ?? '';
+
+                        // FAKAT "ZZZ_" BILAN BOSHLANGANLARNI OLAMIZ
+                        if (str_starts_with($zoneName, 'ZZZ_')) {
+                            try {
+                                $bounds = $zoneData['b'] ?? null;
+
+                                // ZZZ_ yozuvini olib tashlab toza nomini saqlaymiz (xohlasangiz olib tashlamasligingiz ham mumkin)
+                                $cleanName = str_replace('ZZZ_', '', $zoneName);
+
+                                GeozoneGroup::updateOrCreate(
+                                    [
+                                        'wialon_id' => $zoneData['id'],
+                                        'resource_id' => $resourceId
+                                    ],
+                                    [
+                                        'name' => $cleanName, // Toza nom bilan saqlaydi
+                                        'description' => $zoneData['d'] ?? null,
+                                        'type' => $zoneData['t'] ?? null,
+                                        'min_x' => $bounds['min_x'] ?? null,
+                                        'min_y' => $bounds['min_y'] ?? null,
+                                        'max_x' => $bounds['max_x'] ?? null,
+                                        'max_y' => $bounds['max_y'] ?? null,
+                                        'cen_x' => $bounds['cen_x'] ?? null,
+                                        'cen_y' => $bounds['cen_y'] ?? null,
+                                    ]
+                                );
+                                $count++;
+                            } catch (\Exception $e) {
+                                $this->error("Geozona saqlanmadi (ID: {$zoneData['id']}): " . $e->getMessage());
+                            }
+                        }
+                    }
+                }
+            }
+            $this->info("   -> Jami $count ta 'ZZZ_' bilan boshlangan Geozona saqlandi.");
+        } else {
+            $this->error("   -> Geozonalar topilmadi.");
         }
     }
 }
